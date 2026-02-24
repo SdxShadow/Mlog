@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "v0.1.2"
+var version = "v0.1.3"
 
 var rootCmd = &cobra.Command{
 	Use:   "mlog",
@@ -226,13 +226,17 @@ func loadOrCreateConfig(path string) (*types.Config, error) {
 }
 
 func defaultConfig() *types.Config {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/tmp"
+	}
 	return &types.Config{
 		Server: types.ServerConfig{
 			ID:              getHostname(),
 			PollingInterval: "1s",
 		},
 		Database: types.DatabaseConfig{
-			Path:          "/var/lib/mlog/mlog.db",
+			Path:          home + "/.mlog/mlog.db",
 			MaxSizeMB:     1000,
 			RetentionDays: 90,
 		},
