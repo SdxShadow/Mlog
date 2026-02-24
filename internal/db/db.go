@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -12,6 +14,12 @@ import (
 var db *sql.DB
 
 func Init(path string) error {
+	// Create directory if not exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create db directory: %w", err)
+	}
+
 	var err error
 	db, err = sql.Open("sqlite3", path+"?_journal_mode=WAL")
 	if err != nil {
