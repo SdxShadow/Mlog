@@ -1,0 +1,35 @@
+# Binaries (in root)
+/mlog
+/mlogd
+*.exe
+
+*.test
+
+*.out
+
+vendor/
+
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Build output
+/bin/
+/dist/
+
+# Logs
+*.log
+
+# Database
+*.db
+*.db-journal
+
+config.yaml
+
+/doc/
