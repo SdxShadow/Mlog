@@ -17,10 +17,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "v0.1.0"
+
 var rootCmd = &cobra.Command{
 	Use:   "mlog",
 	Short: "Mlog - Linux server monitoring and logging",
 	Long:  `Mlog monitors SSH, Nginx, Apache, PM2 logs and system stats`,
+	Version: version,
 }
 
 var serveCmd = &cobra.Command{
