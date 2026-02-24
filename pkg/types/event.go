@@ -32,6 +32,7 @@ const (
 	EventPM2Restart  EventType = "PM2_RESTART"
 	EventPM2Error    EventType = "PM2_ERROR"
 	EventPM2Crash    EventType = "PM2_CRASH"
+	EventPM2Exit     EventType = "PM2_EXIT"
 
 	EventCustom EventType = "CUSTOM"
 )
