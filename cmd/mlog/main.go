@@ -24,6 +24,12 @@ var queryCmd = &cobra.Command{
 	Run:   runQuery,
 }
 
+var dashboardCmd = &cobra.Command{
+	Use:   "dashboard",
+	Short: "Live dashboard with logs and system stats",
+	Run:   runDashboard,
+}
+
 var monitorCmd = &cobra.Command{
 	Use:   "monitor",
 	Short: "Monitor logs in real-time",
@@ -45,6 +51,7 @@ var configCmd = &cobra.Command{
 func main() {
 	rootCmd.AddCommand(queryCmd)
 	rootCmd.AddCommand(monitorCmd)
+	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(configCmd)
 
@@ -105,7 +112,15 @@ func runQuery(cmd *cobra.Command, args []string) {
 }
 
 func runMonitor(cmd *cobra.Command, args []string) {
-	fmt.Println("Real-time monitoring - not yet implemented")
+	fmt.Println("Real-time monitoring - use 'mlog dashboard' instead")
+}
+
+func runDashboard(cmd *cobra.Command, args []string) {
+	dash := NewDashboard()
+	if err := dash.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Dashboard error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func runStats(cmd *cobra.Command, args []string) {
