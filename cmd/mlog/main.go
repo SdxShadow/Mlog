@@ -17,7 +17,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "v0.1.3"
+func forkExec(name string, args []string) (int, error) {
+	pid, err := syscall.ForkExec(name, args, &syscall.ProcAttr{
+		Env:   os.Environ(),
+		Files: []uintptr{0, 1, 2},
+	})
+	return pid, err
+}
+
+var version = "v0.1.4"
 
 var rootCmd = &cobra.Command{
 	Use:   "mlog",
@@ -30,6 +38,12 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Run as daemon to collect logs",
 	Run:   runServe,
+}
+
+var installCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install systemd service for auto-start",
+	Run:   runInstall,
 }
 
 var dashboardCmd = &cobra.Command{
@@ -52,12 +66,14 @@ var stopCmd = &cobra.Command{
 
 func main() {
 	rootCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(queryCmd)
 	rootCmd.AddCommand(stopCmd)
 
-	serveCmd.Flags().StringP("config", "c", "/etc/mlog/mlog.yaml", "Config file path")
-	dashboardCmd.Flags().StringP("config", "c", "/etc/mlog/mlog.yaml", "Config file path")
+	serveCmd.Flags().StringP("config", "c", "", "Config file path")
+	serveCmd.Flags().BoolP("daemon", "d", false, "Run in background")
+	dashboardCmd.Flags().StringP("config", "c", "", "Config file path")
 	queryCmd.Flags().StringP("type", "t", "", "Event type filter")
 	queryCmd.Flags().StringP("ip", "i", "", "Source IP filter")
 	queryCmd.Flags().Int("limit", 50, "Result limit")
@@ -69,7 +85,28 @@ func main() {
 }
 
 func runServe(cmd *cobra.Command, args []string) {
+	daemon, _ := cmd.Flags().GetBool("daemon")
 	configPath, _ := cmd.Flags().GetString("config")
+
+	// Run in background
+	if daemon {
+		execPath, err := os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get executable: %v\n", err)
+			os.Exit(1)
+		}
+		args := []string{"serve"}
+		if configPath != "" {
+			args = append(args, "-c", configPath)
+		}
+		pid, err := forkExec(execPath, args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to daemonize: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Mlog started in background (PID: %d)\n", pid)
+		return
+	}
 
 	cfg, err := loadOrCreateConfig(configPath)
 	if err != nil {
@@ -167,6 +204,48 @@ func runQuery(cmd *cobra.Command, args []string) {
 	for _, e := range events {
 		fmt.Printf("[%s] %-20s %s\n", e.Timestamp.Format("15:04:05"), e.EventType, e.Message)
 	}
+}
+
+func runInstall(cmd *cobra.Command, args []string) {
+	// Get mlog binary path
+	binPath, err := exec.LookPath("mlog")
+	if err != nil {
+		fmt.Println("Error: mlog not found in PATH. Install with: go install github.com/SdxShadow/Mlog/cmd/mlog@v0.1.4")
+		os.Exit(1)
+	}
+
+	service := `[Unit]
+Description=Mlog - Linux Server Monitoring
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=` + binPath + ` serve -d
+ExecStop=` + binPath + ` stop
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target
+`
+
+	// Write service file
+	err = os.WriteFile("/etc/systemd/system/mlog.service", []byte(service), 0644)
+	if err != nil {
+		fmt.Printf("Error writing service file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Reload systemd
+	cmdExec := exec.Command("systemctl", "daemon-reload")
+	cmdExec.Run()
+
+	fmt.Println("Mlog service installed!")
+	fmt.Println("Commands:")
+	fmt.Println("  sudo systemctl start mlog   # Start")
+	fmt.Println("  sudo systemctl stop mlog    # Stop")
+	fmt.Println("  sudo systemctl status mlog  # Status")
 }
 
 func runStop(cmd *cobra.Command, args []string) {
