@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/SdxShadow/Mlog/internal/config"
@@ -40,10 +41,17 @@ var queryCmd = &cobra.Command{
 	Run:   runQuery,
 }
 
+var stopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop the running mlog daemon",
+	Run:   runStop,
+}
+
 func main() {
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(queryCmd)
+	rootCmd.AddCommand(stopCmd)
 
 	serveCmd.Flags().StringP("config", "c", "/etc/mlog/mlog.yaml", "Config file path")
 	dashboardCmd.Flags().StringP("config", "c", "/etc/mlog/mlog.yaml", "Config file path")
@@ -155,6 +163,43 @@ func runQuery(cmd *cobra.Command, args []string) {
 
 	for _, e := range events {
 		fmt.Printf("[%s] %-20s %s\n", e.Timestamp.Format("15:04:05"), e.EventType, e.Message)
+	}
+}
+
+func runStop(cmd *cobra.Command, args []string) {
+	// Find mlog process using pgrep
+	cmdExec := exec.Command("pgrep", "-f", "mlog serve")
+	output, err := cmdExec.Output()
+	if err != nil {
+		fmt.Println("No mlog daemon running")
+		return
+	}
+
+	var pids []int
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var pid int
+		fmt.Sscanf(line, "%d", &pid)
+		if pid > 0 && pid != os.Getpid() {
+			pids = append(pids, pid)
+		}
+	}
+
+	if len(pids) == 0 {
+		fmt.Println("No mlog daemon running")
+		return
+	}
+
+	for _, pid := range pids {
+		err := syscall.Kill(pid, syscall.SIGTERM)
+		if err != nil {
+			fmt.Printf("Failed to stop process %d: %v\n", pid, err)
+		} else {
+			fmt.Printf("Stopped mlog daemon (PID: %d)\n", pid)
+		}
 	}
 }
 
