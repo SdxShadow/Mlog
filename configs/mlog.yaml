@@ -1,0 +1,58 @@
+server:
+  id: ""
+  hostname: ""
+  polling_interval: "1s"
+
+logging:
+  level: "info"
+  file: "/var/log/mlog/mlog.log"
+
+database:
+  path: "/var/lib/mlog/mlog.db"
+  max_size_mb: 1000
+  retention_days: 90
+
+ssh:
+  enabled: true
+  log_files:
+    - "/var/log/auth.log"
+    - "/var/log/secure"
+  track_sessions: true
+
+security:
+  enabled: true
+  brute_force:
+    threshold: 5
+    window_minutes: 5
+  port_scan:
+    threshold: 10
+    window_seconds: 5
+
+system:
+  enabled: true
+  log_files:
+    - "/var/log/syslog"
+    - "/var/log/messages"
+  journalctl: true
+
+application:
+  enabled: true
+  nginx:
+    enabled: true
+    access_log: "/var/log/nginx/access.log"
+    error_log: "/var/log/nginx/error.log"
+    watch_vhosts: true
+  apache:
+    enabled: true
+    access_log: "/var/log/apache2/access.log"
+    error_log: "/var/log/apache2/error.log"
+  pm2:
+    enabled: true
+    log_dir: "~/.pm2/logs"
+    watch_stdout: true
+    watch_stderr: true
+  custom: []
+
+monitoring:
+  realtime: true
+  buffer_size: 100
