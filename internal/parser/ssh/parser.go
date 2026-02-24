@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/mlog/mlog/pkg/types"
+	"github.com/SdxShadow/Mlog/pkg/types"
 )
 
 type Parser struct {

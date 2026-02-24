@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mlog/mlog/pkg/types"
+	"github.com/SdxShadow/Mlog/pkg/types"
 	"github.com/spf13/viper"
 )
 

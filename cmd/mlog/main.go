@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mlog/mlog/internal/config"
-	"github.com/mlog/mlog/internal/db"
-	"github.com/mlog/mlog/internal/monitor"
-	"github.com/mlog/mlog/pkg/types"
+	"github.com/SdxShadow/Mlog/internal/config"
+	"github.com/SdxShadow/Mlog/internal/db"
+	"github.com/SdxShadow/Mlog/internal/monitor"
+	"github.com/SdxShadow/Mlog/pkg/types"
 	"github.com/spf13/cobra"
 )
 

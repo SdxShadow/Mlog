@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/mlog/mlog/internal/db"
-	"github.com/mlog/mlog/internal/parser/application"
-	"github.com/mlog/mlog/internal/parser/ssh"
-	"github.com/mlog/mlog/pkg/types"
+	"github.com/SdxShadow/Mlog/internal/db"
+	"github.com/SdxShadow/Mlog/internal/parser/application"
+	"github.com/SdxShadow/Mlog/internal/parser/ssh"
+	"github.com/SdxShadow/Mlog/pkg/types"
 )
 
 type Watcher struct {

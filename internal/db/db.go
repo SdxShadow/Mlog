@@ -6,7 +6,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/mlog/mlog/pkg/types"
+	"github.com/SdxShadow/Mlog/pkg/types"
 )
 
 var db *sql.DB

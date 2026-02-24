@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mlog/mlog/pkg/types"
+	"github.com/SdxShadow/Mlog/pkg/types"
 )
 
 type PM2Parser struct {
