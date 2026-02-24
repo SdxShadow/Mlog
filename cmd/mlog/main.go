@@ -3,25 +3,29 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/mlog/mlog/internal/config"
 	"github.com/mlog/mlog/internal/db"
+	"github.com/mlog/mlog/internal/monitor"
+	"github.com/mlog/mlog/pkg/types"
 	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "mlog",
-	Short: "Mlog - Linux server monitoring and logging tool",
-	Long:  `Mlog captures SSH connections, security events, and system logs from Linux servers.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Mlog CLI - Use --help for usage")
-	},
+	Short: "Mlog - Linux server monitoring and logging",
+	Long:  `Mlog monitors SSH, Nginx, Apache, PM2 logs and system stats`,
 }
 
-var queryCmd = &cobra.Command{
-	Use:   "query",
-	Short: "Query events from the database",
-	Run:   runQuery,
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Run as daemon to collect logs",
+	Run:   runServe,
 }
 
 var dashboardCmd = &cobra.Command{
@@ -30,39 +34,22 @@ var dashboardCmd = &cobra.Command{
 	Run:   runDashboard,
 }
 
-var monitorCmd = &cobra.Command{
-	Use:   "monitor",
-	Short: "Monitor logs in real-time",
-	Run:   runMonitor,
-}
-
-var statsCmd = &cobra.Command{
-	Use:   "stats",
-	Short: "Show statistics",
-	Run:   runStats,
-}
-
-var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage configuration",
-	Run:   runConfig,
+var queryCmd = &cobra.Command{
+	Use:   "query",
+	Short: "Query events from database",
+	Run:   runQuery,
 }
 
 func main() {
-	rootCmd.AddCommand(queryCmd)
-	rootCmd.AddCommand(monitorCmd)
+	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(dashboardCmd)
-	rootCmd.AddCommand(statsCmd)
-	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(queryCmd)
 
-	queryCmd.Flags().StringP("type", "t", "", "Filter by event type")
-	queryCmd.Flags().StringP("ip", "i", "", "Filter by source IP")
-	queryCmd.Flags().StringP("user", "u", "", "Filter by username")
-	queryCmd.Flags().StringP("severity", "s", "", "Filter by severity")
-	queryCmd.Flags().Int("limit", 100, "Limit results")
-
-	monitorCmd.Flags().BoolP("ssh", "s", false, "Only show SSH events")
-	monitorCmd.Flags().BoolP("security", "S", false, "Only show security events")
+	serveCmd.Flags().StringP("config", "c", "/etc/mlog/mlog.yaml", "Config file path")
+	dashboardCmd.Flags().StringP("config", "c", "/etc/mlog/mlog.yaml", "Config file path")
+	queryCmd.Flags().StringP("type", "t", "", "Event type filter")
+	queryCmd.Flags().StringP("ip", "i", "", "Source IP filter")
+	queryCmd.Flags().Int("limit", 50, "Result limit")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -70,63 +57,275 @@ func main() {
 	}
 }
 
-func initDB() error {
-	cfg := config.Get()
-	if cfg == nil {
-		return fmt.Errorf("config not loaded")
-	}
-	return db.Init(cfg.Database.Path)
-}
+func runServe(cmd *cobra.Command, args []string) {
+	configPath, _ := cmd.Flags().GetString("config")
 
-func runQuery(cmd *cobra.Command, args []string) {
-	if err := initDB(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init DB: %v\\n", err)
+	cfg, err := loadOrCreateConfig(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if os.Geteuid() != 0 {
+		fmt.Println("Warning: Not running as root. Some logs may not be accessible.")
+	}
+
+	if err := db.Init(cfg.Database.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "DB error: %v\n", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	eventType, _ := cmd.Flags().GetString("type")
-	sourceIP, _ := cmd.Flags().GetString("ip")
-	username, _ := cmd.Flags().GetString("user")
-	severity, _ := cmd.Flags().GetString("severity")
-	limit, _ := cmd.Flags().GetInt("limit")
+	fmt.Printf("Mlog serving on: %s\n", cfg.Server.ID)
 
-	q := &db.EventQuery{
-		EventType: eventType,
-		SourceIP:  sourceIP,
-		Username:  username,
-		Severity:  severity,
-		Limit:     limit,
+	w := monitor.NewWatcher(cfg.Server.ID)
+
+	for _, f := range cfg.SSH.LogFiles {
+		if exists(f) {
+			w.AddPath(f)
+		}
 	}
 
-	events, err := db.QueryEvents(q)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Query failed: %v\\n", err)
+	if cfg.Application.Nginx.Enabled {
+		w.AddPath(cfg.Application.Nginx.AccessLog)
+		w.AddPath(cfg.Application.Nginx.ErrorLog)
+	}
+
+	if cfg.Application.Apache.Enabled {
+		w.AddPath(cfg.Application.Apache.AccessLog)
+		w.AddPath(cfg.Application.Apache.ErrorLog)
+	}
+
+	if cfg.Application.PM2.Enabled {
+		expandPath(&cfg.Application.PM2.LogDir)
+	}
+
+	if err := w.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Watcher error: %v\n", err)
 		os.Exit(1)
 	}
+	defer w.Stop()
 
-	fmt.Printf("Found %d events:\\n", len(events))
-	for _, e := range events {
-		fmt.Printf("[%s] %s - %s - %s\\n", e.Timestamp.Format("2006-01-02 15:04:05"), e.EventType, e.Severity, e.Message)
-	}
-}
-
-func runMonitor(cmd *cobra.Command, args []string) {
-	fmt.Println("Real-time monitoring - use 'mlog dashboard' instead")
+	fmt.Println("Monitoring started. Press Ctrl+C to stop.")
+	select {}
 }
 
 func runDashboard(cmd *cobra.Command, args []string) {
-	dash := NewDashboard()
-	if err := dash.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Dashboard error: %v\n", err)
+	configPath, _ := cmd.Flags().GetString("config")
+
+	cfg, err := loadOrCreateConfig(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if err := db.Init(cfg.Database.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "DB error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	dash := &Dashboard{maxLines: 30}
+	dash.Start()
+}
+
+func runQuery(cmd *cobra.Command, args []string) {
+	configPath, _ := cmd.Flags().GetString("config")
+	cfg, _ := loadOrCreateConfig(configPath)
+	if cfg == nil {
+		cfg = defaultConfig()
+	}
+
+	db.Init(cfg.Database.Path)
+	defer db.Close()
+
+	eventType, _ := cmd.Flags().GetString("type")
+	ip, _ := cmd.Flags().GetString("ip")
+	limit, _ := cmd.Flags().GetInt("limit")
+
+	events, err := db.QueryEvents(&db.EventQuery{
+		EventType: eventType,
+		SourceIP:  ip,
+		Limit:     limit,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Query error: %v\n", err)
+		return
+	}
+
+	for _, e := range events {
+		fmt.Printf("[%s] %-20s %s\n", e.Timestamp.Format("15:04:05"), e.EventType, e.Message)
 	}
 }
 
-func runStats(cmd *cobra.Command, args []string) {
-	fmt.Println("Statistics - not yet implemented")
+func loadOrCreateConfig(path string) (*types.Config, error) {
+	if exists(path) {
+		return config.Load(path)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return defaultConfig(), nil
+	}
+
+	cfg := defaultConfig()
+	if err := config.Save(path, cfg); err != nil {
+		return cfg, nil
+	}
+
+	fmt.Printf("Created default config: %s\n", path)
+	return cfg, nil
 }
 
-func runConfig(cmd *cobra.Command, args []string) {
-	fmt.Println("Configuration - not yet implemented")
+func defaultConfig() *types.Config {
+	return &types.Config{
+		Server: types.ServerConfig{
+			ID:              getHostname(),
+			PollingInterval: "1s",
+		},
+		Database: types.DatabaseConfig{
+			Path:          "/var/lib/mlog/mlog.db",
+			MaxSizeMB:     1000,
+			RetentionDays: 90,
+		},
+		SSH: types.SSHConfig{
+			Enabled:       true,
+			LogFiles:      []string{"/var/log/auth.log", "/var/log/secure"},
+			TrackSessions: true,
+		},
+		Security: types.SecurityConfig{
+			Enabled: true,
+			BruteForce: types.BruteForceConfig{
+				Threshold:      5,
+				WindowMinutes: 5,
+			},
+		},
+		Application: types.ApplicationConfig{
+			Enabled: true,
+			Nginx: types.NginxConfig{
+				Enabled:     true,
+				AccessLog:  "/var/log/nginx/access.log",
+				ErrorLog:   "/var/log/nginx/error.log",
+			},
+			Apache: types.ApacheConfig{
+				Enabled:    true,
+				AccessLog:  "/var/log/apache2/access.log",
+				ErrorLog:   "/var/log/apache2/error.log",
+			},
+			PM2: types.PM2Config{
+				Enabled: true,
+				LogDir:  os.ExpandEnv("$HOME/.pm2/logs"),
+			},
+		},
+	}
+}
+
+func getHostname() string {
+	h, _ := os.Hostname()
+	if h == "" {
+		return "localhost"
+	}
+	return h
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func expandPath(p *string) {
+	*p = os.ExpandEnv(*p)
+}
+
+// Dashboard for live view
+type Dashboard struct {
+	events   []*types.Event
+	mu       sync.RWMutex
+	stopCh   chan bool
+	maxLines int
+}
+
+func (d *Dashboard) Start() {
+	go d.pollEvents()
+	d.render()
+	<-d.stopCh
+}
+
+func (d *Dashboard) pollEvents() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			events, _ := db.QueryEvents(&db.EventQuery{Limit: d.maxLines})
+			d.mu.Lock()
+			d.events = events
+			d.mu.Unlock()
+			d.render()
+		case <-d.stopCh:
+			return
+		}
+	}
+}
+
+func (d *Dashboard) render() {
+	d.mu.RLock()
+	events := d.events
+	d.mu.RUnlock()
+
+	fmt.Print("\033[2J\033[H")
+
+	fmt.Println("\033[1;34m┌────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│                    MLOG MONITOR                               │")
+	fmt.Println("└────────────────────────────────────────────────────────────────┘\033[0m")
+
+	fmt.Println("\033[1;33m┌────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ SYSTEM STATUS                                                │")
+	fmt.Println("├────────────────────────────────────────────────────────────────┤")
+
+	out, _ := exec.Command("sh", "-c", "uptime && free -h && df -h / | tail -1").Output()
+	fmt.Printf("\033[90m%s\033[0m", out)
+	fmt.Println("└────────────────────────────────────────────────────────────────┘\033[0m")
+
+	fmt.Println("\033[1;36m┌────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ LIVE LOGS                                                    │")
+	fmt.Println("├────────────────────────────────────────────────────────────────┤\033[0m")
+
+	for _, e := range events {
+		color := getColor(e.EventType)
+		fmt.Printf("%s[%s] %-15s %s\033[0m\n",
+			color,
+			e.Timestamp.Format("15:04:05"),
+			e.SourceIP,
+			trunc(e.Message, 50))
+	}
+
+	if len(events) == 0 {
+		fmt.Println("\033[90m  Waiting for logs...\033[0m")
+	}
+
+	fmt.Println("\033[1;36m└────────────────────────────────────────────────────────────────┘\033[0m")
+	fmt.Println("\033[90m  Ctrl+C to exit\033[0m")
+}
+
+func getColor(t types.EventType) string {
+	s := string(t)
+	if strings.Contains(s, "CONNECTED") || strings.Contains(s, "START") {
+		return "\033[32m"
+	}
+	if strings.Contains(s, "FAILED") || strings.Contains(s, "ERROR") || strings.Contains(s, "CRASH") {
+		return "\033[31m"
+	}
+	if strings.Contains(s, "WARNING") || strings.Contains(s, "STOP") {
+		return "\033[33m"
+	}
+	return "\033[37m"
+}
+
+func trunc(s string, l int) string {
+	if len(s) > l {
+		return s[:l-3] + "..."
+	}
+	return s
 }

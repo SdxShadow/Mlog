@@ -57,3 +57,11 @@ func Load(path string) (*types.Config, error) {
 func Get() *types.Config {
 	return cfg
 }
+
+func Save(path string, cfg *types.Config) error {
+	viper.SetConfigFile(path)
+	if err := viper.WriteConfig(); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+	return nil
+}
